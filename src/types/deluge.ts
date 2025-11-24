@@ -21,6 +21,12 @@ export interface DelugeLabel {
   count: number;
 }
 
+export interface DelugeTorrentSummary {
+  hash: string;
+  name: string;
+  progress: number;
+}
+
 export type DelugeVersion = 'v1' | 'v2';
 
 export interface SessionState {

@@ -5,6 +5,20 @@ let client: DelugeClient | null = null;
 let labels: string[] = [];
 let setupInProgress = false;
 let labelMenuInProgress = false;
+const DEFAULT_ADD_TITLE = '⚡ Add to Deluge';
+const DEFAULT_PAUSED_TITLE = '⏸️ Add Paused';
+const DUPLICATE_SUFFIX = ' [Already There]';
+const TORRENT_CACHE_TTL = 30 * 1000;
+const contextMenusApi = chrome.contextMenus as any;
+
+let torrentCache = {
+  hashes: new Set<string>(),
+  names: new Set<string>(),
+  lastUpdated: 0
+};
+
+let torrentCachePromise: Promise<void> | null = null;
+let lastDuplicateMenuState: boolean | null = null;
 
 // Initialize on install or startup
 chrome.runtime.onInstalled.addListener(() => {
@@ -48,14 +62,14 @@ async function setupContextMenus() {
     // Create main menu
     await createMenu({
       id: 'delugelink-add',
-      title: '⚡ Add to Deluge',
+      title: DEFAULT_ADD_TITLE,
       contexts: ['link']
     });
 
     // Create paused menu (as sibling, not child)
     await createMenu({
       id: 'delugelink-paused',
-      title: '⏸️ Add Paused',
+      title: DEFAULT_PAUSED_TITLE,
       contexts: ['link']
     });
 
@@ -65,6 +79,7 @@ async function setupContextMenus() {
       console.log('[DelugeLink] Config found, loading labels');
       await refreshLabels();
       updateLabelMenus();
+      await refreshTorrentCache(true);
     } else {
       console.log('[DelugeLink] No config found, skipping labels');
     }
@@ -171,6 +186,120 @@ async function refreshLabels() {
   }
 }
 
+function normalizeName(name?: string | null): string | null {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return trimmed.toLowerCase();
+}
+
+function extractTorrentKey(url: string): { hash?: string; name?: string } | null {
+  if (!url) return null;
+
+  if (url.startsWith('magnet:')) {
+    const query = url.split('?')[1] || '';
+    const params = new URLSearchParams(query);
+    const xt = params.getAll('xt').find((value) => value?.toLowerCase().startsWith('urn:btih:'));
+    const dn = params.get('dn');
+
+    const hash = xt ? xt.split('urn:btih:')[1]?.toLowerCase() : undefined;
+    const name = dn ? decodeURIComponent(dn) : undefined;
+
+    return { hash, name };
+  }
+
+  if (url.includes('.torrent')) {
+    const rawName = url.split('/').pop();
+    if (!rawName) return null;
+    const cleaned = rawName.split('?')[0];
+    const decoded = decodeURIComponent(cleaned || '');
+    return { name: decoded };
+  }
+
+  return null;
+}
+
+function isDuplicateTorrent(key: { hash?: string; name?: string } | null): boolean {
+  if (!key) return false;
+
+  if (key.hash && torrentCache.hashes.has(key.hash.toLowerCase())) {
+    return true;
+  }
+
+  const normalizedName = normalizeName(key.name);
+  if (normalizedName && torrentCache.names.has(normalizedName)) {
+    return true;
+  }
+
+  return false;
+}
+
+async function refreshTorrentCache(force = false) {
+  if (!force && Date.now() - torrentCache.lastUpdated < TORRENT_CACHE_TTL) {
+    return;
+  }
+
+  if (torrentCachePromise) {
+    return torrentCachePromise;
+  }
+
+  torrentCachePromise = (async () => {
+    try {
+      const config = await getConfig();
+      if (!config) return;
+
+      if (!client) {
+        client = new DelugeClient(config);
+      }
+
+      const summaries = await client.getTorrentSummaries();
+
+      torrentCache = {
+        hashes: new Set(summaries.map((summary) => summary.hash)),
+        names: new Set(
+          summaries
+            .map((summary) => normalizeName(summary.name))
+            .filter((value): value is string => Boolean(value))
+        ),
+        lastUpdated: Date.now()
+      };
+    } catch (error) {
+      console.error('Failed to refresh torrent cache:', error);
+    } finally {
+      torrentCachePromise = null;
+    }
+  })();
+
+  return torrentCachePromise;
+}
+
+function updateContextMenuTitle(id: string, title: string) {
+  return new Promise<void>((resolve) => {
+    chrome.contextMenus.update(id, { title }, () => {
+      chrome.runtime.lastError;
+      resolve();
+    });
+  });
+}
+
+async function setDuplicateMenuState(isDuplicate: boolean) {
+  if (lastDuplicateMenuState === isDuplicate) {
+    return;
+  }
+
+  lastDuplicateMenuState = isDuplicate;
+
+  const addTitle = isDuplicate ? `${DEFAULT_ADD_TITLE}${DUPLICATE_SUFFIX}` : DEFAULT_ADD_TITLE;
+  const pausedTitle = isDuplicate ? `${DEFAULT_PAUSED_TITLE}${DUPLICATE_SUFFIX}` : DEFAULT_PAUSED_TITLE;
+
+  await Promise.all([
+    updateContextMenuTitle('delugelink-add', addTitle),
+    updateContextMenuTitle('delugelink-paused', pausedTitle)
+  ]);
+
+  contextMenusApi.refresh?.();
+}
+
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!info.linkUrl) return;
@@ -198,6 +327,22 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   console.log('[DelugeLink] Context menu clicked:', { url, paused, label });
   await addTorrent(url, { label, paused }, tab?.id);
+});
+
+contextMenusApi.onShown?.addListener((info: any) => {
+  (async () => {
+    const url = info.linkUrl;
+    let isDuplicate = false;
+
+    if (url && (url.startsWith('magnet:') || url.includes('.torrent'))) {
+      await refreshTorrentCache();
+      isDuplicate = isDuplicateTorrent(extractTorrentKey(url));
+    }
+
+    await setDuplicateMenuState(isDuplicate);
+  })().catch((error) => {
+    console.error('[DelugeLink] Failed to update context menu titles:', error);
+  });
 });
 
 async function getConfig(): Promise<DelugeConfig | null> {
@@ -277,6 +422,19 @@ async function addTorrent(url: string, options: { label?: string; paused?: boole
 
     if (result.success) {
       console.log('[DelugeLink] Success, showing success notification');
+
+      if (result.hash) {
+        torrentCache.hashes.add(result.hash.toLowerCase());
+      }
+
+      const key = extractTorrentKey(url);
+      const normalizedName = normalizeName(key?.name || null);
+      if (normalizedName) {
+        torrentCache.names.add(normalizedName);
+      }
+
+      torrentCache.lastUpdated = Date.now();
+
       showNotification(
         '✅ Torrent Added',
         result.message,
@@ -384,7 +542,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     refreshLabels().then(() => sendResponse({ success: true }));
     return true;
   }
+
+  if (request.type === 'CHECK_DUPLICATE') {
+    (async () => {
+      try {
+        const url: string | undefined = request.url;
+        let isDuplicate = false;
+
+        if (url && (url.startsWith('magnet:') || url.includes('.torrent'))) {
+          await refreshTorrentCache();
+          isDuplicate = isDuplicateTorrent(extractTorrentKey(url));
+        }
+
+        await setDuplicateMenuState(isDuplicate);
+        sendResponse({ duplicate: isDuplicate });
+      } catch (error) {
+        console.error('[DelugeLink] Failed duplicate check:', error);
+        await setDuplicateMenuState(false);
+        sendResponse({ duplicate: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return true;
+  }
 });
 
 // Refresh labels periodically
 setInterval(refreshLabels, 5 * 60 * 1000); // Every 5 minutes
+setInterval(() => refreshTorrentCache(true), 60 * 1000);

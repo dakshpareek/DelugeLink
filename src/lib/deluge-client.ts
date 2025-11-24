@@ -1,4 +1,11 @@
-import type { DelugeConfig, DelugeVersion, TorrentAddResult, DelugeStats, DelugeLabel } from '../types/deluge';
+import type {
+  DelugeConfig,
+  DelugeVersion,
+  TorrentAddResult,
+  DelugeStats,
+  DelugeLabel,
+  DelugeTorrentSummary
+} from '../types/deluge';
 
 export class DelugeClient {
   private config: DelugeConfig;
@@ -224,13 +231,29 @@ export class DelugeClient {
       await this.ensureConnected();
       
       const stats = await this.makeRequest('web.update_ui', [
-        ['download_rate', 'upload_rate', 'num_connections'],
+        [
+          'download_rate',
+          'upload_rate',
+          'payload_download_rate',
+          'payload_upload_rate',
+          'num_connections'
+        ],
         {}
       ]);
 
+      const downloadRate =
+        stats?.stats?.download_rate ??
+        stats?.stats?.payload_download_rate ??
+        0;
+
+      const uploadRate =
+        stats?.stats?.upload_rate ??
+        stats?.stats?.payload_upload_rate ??
+        0;
+
       return {
-        downloadSpeed: stats?.stats?.download_rate || 0,
-        uploadSpeed: stats?.stats?.upload_rate || 0,
+        downloadSpeed: typeof downloadRate === 'number' ? downloadRate : 0,
+        uploadSpeed: typeof uploadRate === 'number' ? uploadRate : 0,
         activeDownloads: Object.keys(stats?.torrents || {}).length
       };
     } catch {
@@ -239,6 +262,27 @@ export class DelugeClient {
         uploadSpeed: 0,
         activeDownloads: 0
       };
+    }
+  }
+
+  async getTorrentSummaries(): Promise<DelugeTorrentSummary[]> {
+    try {
+      await this.ensureConnected();
+
+      const data = await this.makeRequest('web.update_ui', [
+        ['name', 'progress'],
+        {}
+      ]);
+
+      const torrents = data?.torrents || {};
+
+      return Object.entries(torrents).map(([hash, torrent]: [string, any]) => ({
+        hash: hash.toLowerCase(),
+        name: typeof torrent?.name === 'string' ? torrent.name : '',
+        progress: typeof torrent?.progress === 'number' ? torrent.progress : 0
+      }));
+    } catch {
+      return [];
     }
   }
 
