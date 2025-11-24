@@ -127,6 +127,10 @@ export default function Popup() {
   const overallVisual = getSpeedVisual(Math.max(downloadSpeed, uploadSpeed));
   const activityVisual = getActivityVisual(activeDownloads);
 
+  const openFeedbackLink = () => {
+    chrome.tabs.create({ url: 'https://github.com/dakshpareek/DelugeLink/issues/new' });
+  };
+
   return (
     <div className="w-[16.5rem] glass-panel text-white overflow-hidden">
       {/* Header */}
@@ -177,6 +181,15 @@ export default function Popup() {
             {activeDownloads}
           </div>
         </div>
+      </div>
+
+      <div className="px-3 py-2 border-t border-white/10 bg-white/5 backdrop-blur-sm flex justify-end">
+        <button
+          onClick={openFeedbackLink}
+          className="text-[10px] font-semibold uppercase tracking-[0.3em] text-white/60 hover:text-white transition-colors duration-200"
+        >
+          Report Issue
+        </button>
       </div>
     </div>
   );

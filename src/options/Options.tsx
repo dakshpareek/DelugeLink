@@ -13,6 +13,7 @@ export default function Options() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
   const [inlineError, setInlineError] = useState<{ host?: string; password?: string }>({});
+  const ISSUE_URL = 'https://github.com/dakshpareek/DelugeLink/issues/new';
 
   useEffect(() => {
     chrome.storage.local.get(['host', 'password', 'webRoot'], (result) => {
@@ -255,6 +256,17 @@ export default function Options() {
             <li>Right-click any magnet or .torrent once configured to send it directly to Deluge.</li>
             <li>Hold Alt/Option while clicking if you want to bypass the extension on a specific link.</li>
           </ul>
+        </div>
+
+        <div className="flex justify-center">
+          <a
+            href={ISSUE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="glass-button inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.22em] text-white transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_44px_rgba(59,130,246,0.24)]"
+          >
+            Report an Issue on GitHub
+          </a>
         </div>
       </div>
     </div>
