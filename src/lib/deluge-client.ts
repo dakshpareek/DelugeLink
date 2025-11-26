@@ -122,10 +122,6 @@ export class DelugeClient {
 
       const addOptions: Record<string, any> = {};
       
-      if (options.label) {
-        addOptions.label = options.label;
-      }
-      
       if (options.paused) {
         addOptions.add_paused = true;
       }
@@ -133,6 +129,15 @@ export class DelugeClient {
       const hash = await this.makeRequest('core.add_torrent_magnet', [magnetUrl, addOptions]);
       
       if (hash) {
+        // Set label separately if provided
+        if (options.label) {
+          try {
+            await this.makeRequest('label.set_torrent', [hash, options.label]);
+          } catch (labelError) {
+            console.warn('Failed to set label:', labelError);
+          }
+        }
+        
         return {
           success: true,
           message: `Added to ${options.label || 'Default'}`,
@@ -168,10 +173,6 @@ export class DelugeClient {
 
       const addOptions: Record<string, any> = {};
       
-      if (options.label) {
-        addOptions.label = options.label;
-      }
-      
       if (options.paused) {
         addOptions.add_paused = true;
       }
@@ -182,6 +183,15 @@ export class DelugeClient {
       const hash = await this.makeRequest('core.add_torrent_file', [filename, base64Data, addOptions]);
       
       if (hash) {
+        // Set label separately if provided
+        if (options.label) {
+          try {
+            await this.makeRequest('label.set_torrent', [hash, options.label]);
+          } catch (labelError) {
+            console.warn('Failed to set label:', labelError);
+          }
+        }
+        
         return {
           success: true,
           message: `Added to ${options.label || 'Default'}`,
